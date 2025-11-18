@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     auth,
+    coaching,
     grocery_lists,
     inventory,
     meal_plans,
@@ -66,6 +67,12 @@ api_router.include_router(
     vision.router,
     prefix="/vision",
     tags=["Vision"]
+)
+
+api_router.include_router(
+    coaching.router,
+    prefix="/coaching",
+    tags=["Coaching"]
 )
 
 # Include WebSocket router (no prefix)
