@@ -265,6 +265,169 @@ Be creative but practical. Ensure the recipe is delicious and nutritionally bala
 
         raise OpenAIServiceError("Failed to generate valid meal plan")
 
+    async def generate_meal_plan_stream(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        websocket,
+        days: int = 3,
+        dietary_restrictions: Optional[List[str]] = None,
+        target_calories: Optional[int] = None,
+        prioritize_expiring: bool = True,
+        max_retries: int = 3,
+    ) -> Dict[str, Any]:
+        """
+        Generate intelligent meal plan with WebSocket streaming updates.
+
+        Sends real-time progress updates to the WebSocket client as the plan is generated.
+
+        Args:
+            db: Database session
+            user_id: User ID
+            websocket: WebSocket connection for streaming updates
+            days: Number of days (3 or 7)
+            dietary_restrictions: List of dietary restrictions
+            target_calories: Daily calorie target
+            prioritize_expiring: Whether to prioritize expiring items
+            max_retries: Maximum retry attempts
+
+        Returns:
+            Structured meal plan dictionary
+
+        Raises:
+            OpenAIServiceError: If generation fails after retries
+        """
+        logger.info(
+            f"Streaming {days}-day meal plan generation for user {user_id}, "
+            f"restrictions: {dietary_restrictions}"
+        )
+
+        try:
+            # Send initial progress
+            await websocket.send_json({
+                "type": "progress",
+                "stage": "checking_cache",
+                "progress": 5,
+                "message": "Checking for cached meal plans..."
+            })
+
+            # Check cache first
+            cache_key = self._generate_cache_key(
+                user_id, days, dietary_restrictions, target_calories
+            )
+            cached_plan = await self._get_cached_plan(cache_key)
+            if cached_plan:
+                logger.info("Returning cached meal plan")
+                await websocket.send_json({
+                    "type": "progress",
+                    "stage": "cache_hit",
+                    "progress": 100,
+                    "message": "Found cached meal plan!"
+                })
+                return cached_plan
+
+            # Gather context
+            await websocket.send_json({
+                "type": "progress",
+                "stage": "analyzing_inventory",
+                "progress": 15,
+                "message": "Analyzing your inventory and expiring items..."
+            })
+
+            context = await self._gather_planning_context(
+                db, user_id, days, dietary_restrictions, target_calories, prioritize_expiring
+            )
+
+            # Send inventory analysis
+            await websocket.send_json({
+                "type": "progress",
+                "stage": "inventory_analyzed",
+                "progress": 25,
+                "message": f"Found {context['total_inventory_items']} items ({len(context['expiring_soon'])} expiring soon)"
+            })
+
+            # Generate plan with retries
+            for attempt in range(max_retries):
+                try:
+                    # Send generation progress
+                    await websocket.send_json({
+                        "type": "progress",
+                        "stage": "generating_plan",
+                        "progress": 30 + (attempt * 20),
+                        "message": f"Generating meal plan with AI (attempt {attempt + 1}/{max_retries})..."
+                    })
+
+                    plan = await self._generate_plan_with_ai(context, attempt)
+
+                    # Send AI generation complete
+                    await websocket.send_json({
+                        "type": "progress",
+                        "stage": "plan_generated",
+                        "progress": 70,
+                        "message": "AI meal plan generated, validating quality..."
+                    })
+
+                    # Quality checks
+                    if self._validate_meal_plan(plan, context):
+                        # Send validation success
+                        await websocket.send_json({
+                            "type": "progress",
+                            "stage": "validation_passed",
+                            "progress": 90,
+                            "message": "Quality checks passed, finalizing..."
+                        })
+
+                        # Cache successful plan
+                        await self._cache_plan(cache_key, plan)
+
+                        # Send completion
+                        await websocket.send_json({
+                            "type": "complete",
+                            "progress": 100,
+                            "message": "Meal plan generated successfully!",
+                            "meal_plan": plan
+                        })
+
+                        logger.info(f"Meal plan generated successfully on attempt {attempt + 1}")
+                        return plan
+                    else:
+                        logger.warning(f"Plan failed quality check on attempt {attempt + 1}")
+                        await websocket.send_json({
+                            "type": "progress",
+                            "stage": "validation_failed",
+                            "progress": 40 + (attempt * 20),
+                            "message": f"Quality check failed, retrying... ({attempt + 1}/{max_retries})"
+                        })
+
+                except Exception as e:
+                    logger.error(f"Attempt {attempt + 1} failed: {e}")
+                    await websocket.send_json({
+                        "type": "error",
+                        "stage": "generation_error",
+                        "message": f"Generation attempt {attempt + 1} failed: {str(e)}"
+                    })
+
+                    if attempt == max_retries - 1:
+                        await websocket.send_json({
+                            "type": "error",
+                            "stage": "max_retries_exceeded",
+                            "message": f"Failed to generate meal plan after {max_retries} attempts"
+                        })
+                        raise OpenAIServiceError(
+                            f"Failed to generate meal plan after {max_retries} attempts: {e}"
+                        )
+
+            raise OpenAIServiceError("Failed to generate valid meal plan")
+
+        except Exception as e:
+            # Send final error
+            await websocket.send_json({
+                "type": "error",
+                "stage": "fatal_error",
+                "message": f"Meal plan generation failed: {str(e)}"
+            })
+            raise
+
     async def _gather_planning_context(
         self,
         db: AsyncSession,

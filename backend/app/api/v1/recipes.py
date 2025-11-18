@@ -6,18 +6,26 @@ Provides endpoints for recipe search, details, and favorites.
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_active_user, get_db
 from app.core.logging import get_logger
 from app.models.user import User
+from app.schemas.coaching import (
+    CustomRecipeGenerateRequest,
+    CustomRecipeResponse,
+)
 from app.schemas.recipe import (
     RecipeListResponse,
     RecipeResponse,
     UserRecipeCreate,
     UserRecipeResponse,
 )
+from app.services.intelligent_meal_plan_service import (
+    get_intelligent_meal_plan_service,
+)
+from app.services.openai_service import OpenAIServiceError
 from app.services.recipe_service import recipe_service
 
 logger = get_logger(__name__)
@@ -213,3 +221,96 @@ async def get_my_favorite_recipes(
         skip=skip,
         limit=limit,
     )
+
+
+@router.post(
+    "/generate",
+    response_model=CustomRecipeResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Generate custom recipe from ingredients",
+    description="Generate a custom AI-powered recipe from available ingredients",
+)
+async def generate_custom_recipe(
+    request: CustomRecipeGenerateRequest,
+    current_user: User = Depends(get_current_active_user),
+) -> CustomRecipeResponse:
+    """
+    Generate a custom recipe from specific ingredients using AI.
+
+    **AI-Powered Recipe Generation:**
+    The AI creates a complete, detailed recipe with:
+    - Step-by-step cooking instructions
+    - Nutritional information per serving
+    - Cooking times and difficulty level
+    - Suggestions for additional ingredients if needed
+
+    **Features:**
+    - **available_ingredients**: List of ingredients you have available
+    - **dietary_restrictions**: Optional restrictions (vegetarian, gluten-free, etc.)
+    - **cuisine_type**: Optional cuisine preference (italian, mexican, asian, etc.)
+    - **meal_type**: Type of meal (breakfast, lunch, dinner, snack)
+
+    **Example Request:**
+    ```json
+    {
+      "available_ingredients": ["Chicken Breast", "Broccoli", "Garlic", "Olive Oil"],
+      "dietary_restrictions": ["gluten-free"],
+      "cuisine_type": "mediterranean",
+      "meal_type": "dinner"
+    }
+    ```
+
+    **Response Includes:**
+    - Complete recipe with name and description
+    - Ingredient list with quantities and units
+    - Step-by-step instructions
+    - Nutrition facts (calories, protein, carbs, fat)
+    - Prep and cook times
+    - Difficulty level
+
+    Args:
+        request: Custom recipe generation request with ingredients and preferences
+        current_user: Current authenticated user
+
+    Returns:
+        Complete custom recipe with full details
+
+    Raises:
+        HTTPException: If recipe generation fails
+    """
+    logger.info(
+        f"Custom recipe generation request from user {current_user.id}, "
+        f"ingredients: {len(request.available_ingredients)}, "
+        f"cuisine: {request.cuisine_type}, meal: {request.meal_type}"
+    )
+
+    try:
+        # Get intelligent meal plan service
+        meal_plan_service = get_intelligent_meal_plan_service()
+
+        # Generate custom recipe
+        recipe = await meal_plan_service.generate_custom_recipe(
+            available_ingredients=request.available_ingredients,
+            dietary_restrictions=request.dietary_restrictions,
+            cuisine_type=request.cuisine_type,
+            meal_type=request.meal_type,
+        )
+
+        logger.info(
+            f"Custom recipe '{recipe.get('recipe_name')}' generated for user {current_user.id}"
+        )
+
+        return CustomRecipeResponse(**recipe)
+
+    except OpenAIServiceError as e:
+        logger.error(f"OpenAI service error during recipe generation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"AI service error: {str(e)}",
+        )
+    except Exception as e:
+        logger.error(f"Recipe generation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate custom recipe",
+        )

@@ -8,13 +8,18 @@ Provides WebSocket connections for:
 
 import asyncio
 import json
-from typing import Dict, Set
+from typing import Dict, Optional, Set
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from jose import JWTError, jwt
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_db
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.services.intelligent_meal_plan_service import (
+    get_intelligent_meal_plan_service,
+)
 
 logger = get_logger(__name__)
 
@@ -201,38 +206,53 @@ async def websocket_notifications(websocket: WebSocket, token: str):
 
 
 @router.websocket("/ws/meal-plan-generation")
-async def websocket_meal_plan_generation(websocket: WebSocket, token: str):
+async def websocket_meal_plan_generation(
+    websocket: WebSocket,
+    token: str,
+    days: int = 3,
+    dietary_restrictions: Optional[str] = None,
+    target_calories: Optional[int] = None,
+):
     """
     WebSocket endpoint for streaming meal plan generation progress.
 
     Clients can connect to receive real-time updates during AI meal plan generation.
 
     Usage:
-        ws://localhost:8000/api/v1/ws/meal-plan-generation?token=<JWT_TOKEN>
+        ws://localhost:8000/api/v1/ws/meal-plan-generation?token=<JWT_TOKEN>&days=3&dietary_restrictions=vegetarian,gluten-free&target_calories=2000
+
+    Query Parameters:
+        - token: JWT authentication token (required)
+        - days: Number of days for meal plan (3 or 7, default: 3)
+        - dietary_restrictions: Comma-separated dietary restrictions (optional)
+        - target_calories: Daily calorie target (optional)
 
     Message format (server -> client):
         {
             "type": "progress",
-            "stage": "analyzing_preferences",
+            "stage": "analyzing_inventory",
             "progress": 25,
-            "message": "Analyzing dietary preferences..."
-        }
-
-        {
-            "type": "meal_added",
-            "meal": {
-                "date": "2025-11-18",
-                "meal_type": "breakfast",
-                "recipe_name": "Avocado Toast"
-            }
+            "message": "Analyzing your inventory and expiring items..."
         }
 
         {
             "type": "complete",
-            "meal_plan_id": 123,
-            "message": "Meal plan generated successfully!"
+            "progress": 100,
+            "message": "Meal plan generated successfully!",
+            "meal_plan": {...}
+        }
+
+        {
+            "type": "error",
+            "stage": "generation_error",
+            "message": "Error message"
         }
     """
+    # Import here to avoid circular dependency
+    from app.db.session import AsyncSessionLocal
+
+    db: Optional[AsyncSession] = None
+
     try:
         # Verify token and get user ID
         user_id = verify_websocket_token(token)
@@ -248,12 +268,43 @@ async def websocket_meal_plan_generation(websocket: WebSocket, token: str):
             }
         )
 
-        # PLACEHOLDER: Simulate meal plan generation progress
-        # In production, this would receive real-time updates from AI generation service
-        await simulate_meal_plan_generation(websocket)
+        # Parse dietary restrictions
+        restrictions_list = (
+            [r.strip() for r in dietary_restrictions.split(",")]
+            if dietary_restrictions
+            else None
+        )
+
+        # Create database session
+        db = AsyncSessionLocal()
 
         try:
-            # Keep connection alive
+            # Get intelligent meal plan service
+            intelligent_service = get_intelligent_meal_plan_service()
+
+            # Generate meal plan with streaming updates
+            meal_plan = await intelligent_service.generate_meal_plan_stream(
+                db=db,
+                user_id=user_id,
+                websocket=websocket,
+                days=days,
+                dietary_restrictions=restrictions_list,
+                target_calories=target_calories,
+                prioritize_expiring=True,
+                max_retries=3,
+            )
+
+            logger.info(
+                f"Meal plan generated successfully via WebSocket for user {user_id}"
+            )
+
+        finally:
+            # Close database session
+            if db:
+                await db.close()
+
+        try:
+            # Keep connection alive for additional messages
             while True:
                 data = await websocket.receive_text()
 
@@ -262,6 +313,12 @@ async def websocket_meal_plan_generation(websocket: WebSocket, token: str):
 
                     if message.get("type") == "ping":
                         await websocket.send_json({"type": "pong"})
+                    elif message.get("type") == "generate":
+                        # Client requested new generation
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "New generation request not supported. Please reconnect."
+                        })
 
                 except json.JSONDecodeError:
                     logger.warning(f"Invalid JSON from user {user_id}: {data}")
@@ -276,6 +333,14 @@ async def websocket_meal_plan_generation(websocket: WebSocket, token: str):
 
     except Exception as e:
         logger.error(f"WebSocket error: {e}", exc_info=True)
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "stage": "fatal_error",
+                "message": f"Server error: {str(e)}"
+            })
+        except:
+            pass
         await websocket.close(code=1011, reason="Internal server error")
 
 
