@@ -54,6 +54,50 @@ class TokenResponse(BaseSchema):
     token_type: str = "bearer"
 
 
+class TokenRefreshRequest(BaseSchema):
+    """Schema for token refresh request."""
+
+    refresh_token: str
+
+
+class EmailVerificationRequest(BaseSchema):
+    """Schema for email verification request."""
+
+    token: str
+
+
+class ResendVerificationRequest(BaseSchema):
+    """Schema for resending verification email."""
+
+    email: EmailStr
+
+
+class PasswordResetRequest(BaseSchema):
+    """Schema for requesting password reset."""
+
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseSchema):
+    """Schema for confirming password reset with token."""
+
+    token: str
+    new_password: str = Field(..., min_length=8, max_length=100)
+
+
+class PasswordChangeRequest(BaseSchema):
+    """Schema for changing password (when logged in)."""
+
+    current_password: str
+    new_password: str = Field(..., min_length=8, max_length=100)
+
+
+class LogoutRequest(BaseSchema):
+    """Schema for logout request (optional refresh token)."""
+
+    refresh_token: Optional[str] = None
+
+
 # UserProfile Schemas
 class UserProfileBase(BaseSchema):
     """Base user profile schema."""

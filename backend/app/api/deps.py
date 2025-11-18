@@ -14,6 +14,7 @@ from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cache import is_token_blacklisted
 from app.core.config import settings
 from app.core.exceptions import UnauthorizedException
 from app.core.security import verify_token
@@ -34,6 +35,8 @@ async def get_current_user(
     """
     Get current authenticated user from JWT token.
 
+    Checks if token is blacklisted (logged out) before validating.
+
     Args:
         token: JWT access token from Authorization header
         db: Database session
@@ -42,12 +45,26 @@ async def get_current_user(
         Current user object
 
     Raises:
-        UnauthorizedException: If token is invalid or user not found
+        UnauthorizedException: If token is invalid, blacklisted, or user not found
     """
+    # Check if token is blacklisted (logged out)
+    if await is_token_blacklisted(token):
+        raise UnauthorizedException(
+            "Token has been revoked",
+            error_code="TOKEN_REVOKED"
+        )
+
     # Verify token
     payload = verify_token(token)
     if payload is None:
         raise UnauthorizedException("Could not validate credentials")
+
+    # Verify token type
+    if payload.get("type") != "access":
+        raise UnauthorizedException(
+            "Invalid token type",
+            error_code="INVALID_TOKEN_TYPE"
+        )
 
     # Extract user ID from token
     user_id: Optional[int] = payload.get("sub")

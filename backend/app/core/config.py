@@ -67,6 +67,22 @@ class Settings(BaseSettings):
         description="Allowed CORS origins",
     )
 
+    # Frontend URL
+    FRONTEND_URL: str = Field(
+        default="http://localhost:3000",
+        description="Frontend application URL for email links",
+    )
+
+    # Email (SendGrid)
+    SENDGRID_API_KEY: Optional[str] = Field(
+        default=None,
+        description="SendGrid API key for production emails",
+    )
+    FROM_EMAIL: str = Field(
+        default="noreply@weightcoach.app",
+        description="From email address for outgoing emails",
+    )
+
     # API Settings
     API_V1_PREFIX: str = "/api/v1"
 

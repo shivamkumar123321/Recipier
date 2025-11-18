@@ -130,3 +130,85 @@ def get_password_hash(password: str) -> str:
         Bcrypt hashed password
     """
     return pwd_context.hash(password)
+
+
+def create_verification_token(email: str) -> str:
+    """
+    Generate email verification token.
+
+    Args:
+        email: User email address
+
+    Returns:
+        Encoded JWT verification token (valid for 24 hours)
+    """
+    to_encode = {
+        "sub": email,
+        "type": "email_verification",
+        "iat": datetime.utcnow(),
+        "exp": datetime.utcnow() + timedelta(hours=24),
+    }
+
+    encoded_jwt = jwt.encode(
+        to_encode,
+        settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM
+    )
+    return encoded_jwt
+
+
+def create_password_reset_token(email: str) -> str:
+    """
+    Generate password reset token.
+
+    Args:
+        email: User email address
+
+    Returns:
+        Encoded JWT password reset token (valid for 1 hour)
+    """
+    to_encode = {
+        "sub": email,
+        "type": "password_reset",
+        "iat": datetime.utcnow(),
+        "exp": datetime.utcnow() + timedelta(hours=1),
+    }
+
+    encoded_jwt = jwt.encode(
+        to_encode,
+        settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM
+    )
+    return encoded_jwt
+
+
+def verify_verification_token(token: str) -> Optional[str]:
+    """
+    Verify email verification token.
+
+    Args:
+        token: Email verification token
+
+    Returns:
+        Email address if valid, None otherwise
+    """
+    payload = verify_token(token)
+    if not payload or payload.get("type") != "email_verification":
+        return None
+    return payload.get("sub")
+
+
+def verify_password_reset_token(token: str) -> Optional[str]:
+    """
+    Verify password reset token.
+
+    Args:
+        token: Password reset token
+
+    Returns:
+        Email address if valid, None otherwise
+    """
+    payload = verify_token(token)
+    if not payload or payload.get("type") != "password_reset":
+        return None
+    return payload.get("sub")

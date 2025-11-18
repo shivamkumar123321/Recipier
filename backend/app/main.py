@@ -16,11 +16,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
 from app.api.v1.router import api_router
+from app.core.cache import close_redis, get_redis
 from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
 from app.db.database import close_db, init_db
 from app.middleware import RequestLoggerMiddleware, register_exception_handlers
+from app.middleware.rate_limiter import limiter
 
 # Set up logging
 setup_logging()
@@ -41,6 +46,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info(f"Environment: {settings.ENVIRONMENT}")
     logger.info(f"Debug mode: {settings.DEBUG}")
 
+    # Initialize Redis connection pool
+    try:
+        await get_redis()
+        logger.info("✅ Redis connection established")
+    except Exception as e:
+        logger.error(f"❌ Failed to connect to Redis: {e}")
+        logger.warning("⚠️  Application will continue without Redis (reduced functionality)")
+
     # Initialize database (only if needed for testing)
     if settings.ENVIRONMENT == "development" and settings.DEBUG:
         logger.info("Initializing database tables (development mode)...")
@@ -53,8 +66,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Shutdown
     logger.info("🛑 Shutting down Weight Coach API...")
 
+    # Close Redis connection pool
+    await close_redis()
+    logger.info("✅ Redis connection closed")
+
     # Close database connections
     await close_db()
+    logger.info("✅ Database connection closed")
 
     logger.info("✅ Application shutdown complete")
 
@@ -69,6 +87,10 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.DEBUG else None,
     lifespan=lifespan,
 )
+
+# Add rate limiter state
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 # Configure CORS
