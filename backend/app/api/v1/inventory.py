@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import PaginationParams, get_current_user
+from app.core.logging import get_logger
 from app.db.database import get_db
 from app.models.user import User
 from app.schemas.inventory import (
@@ -31,6 +32,8 @@ from app.schemas.inventory import (
     VoiceAddResponse,
 )
 from app.services.inventory_service import inventory_service
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -221,6 +224,90 @@ async def scan_food_image(
     )
 
     return response
+
+
+@router.post(
+    "/scan/file",
+    response_model=ImageScanResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add items via image file upload",
+    description="Upload image file for food recognition and inventory addition (multipart/form-data)",
+)
+async def scan_food_image_file(
+    image_file: UploadFile = File(..., description="Food image to scan"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ImageScanResponse:
+    """
+    Scan uploaded food image and add items to inventory.
+
+    Accepts image files via multipart/form-data. Supported formats:
+    jpg, jpeg, png, webp.
+
+    The image will be:
+    1. Validated (file type, size, dimensions)
+    2. Analyzed using GPT-4 Vision
+    3. Food items identified with quantities
+    4. Items automatically added to inventory
+    5. Image saved to user's storage
+
+    Args:
+        image_file: Uploaded image file
+        db: Database session
+        current_user: Current authenticated user
+
+    Returns:
+        Image scan response with identified and added items
+
+    Raises:
+        HTTPException: If validation or processing fails
+    """
+    from app.services.image_storage_service import (
+        ImageStorageError,
+        image_storage_service,
+    )
+
+    try:
+        # Read image file
+        image_bytes = await image_file.read()
+
+        # Validate file
+        file_ext = image_storage_service.validate_file_type(
+            image_file.filename or "image.jpg",
+            image_file.content_type,
+        )
+        image_storage_service.validate_file_size(len(image_bytes))
+        image_storage_service.validate_image_dimensions(image_bytes)
+
+        # Convert to base64 for processing
+        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+
+        # Delegate to existing service
+        response = await inventory_service.add_items_from_image(
+            db=db,
+            image_data_base64=image_base64,
+            image_format=file_ext,
+            user_id=current_user.id,
+        )
+
+        return response
+
+    except ImageStorageError as e:
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        from fastapi import HTTPException
+
+        logger = get_logger(__name__)
+        logger.error(f"Image scan failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to scan image",
+        )
 
 
 @router.get(

@@ -11,6 +11,7 @@ from app.api.v1 import (
     meal_plans,
     notifications,
     recipes,
+    vision,
     voice,
     websocket,
 )
@@ -59,6 +60,12 @@ api_router.include_router(
     voice.router,
     prefix="/voice",
     tags=["Voice"]
+)
+
+api_router.include_router(
+    vision.router,
+    prefix="/vision",
+    tags=["Vision"]
 )
 
 # Include WebSocket router (no prefix)
