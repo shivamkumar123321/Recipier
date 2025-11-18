@@ -137,3 +137,62 @@ class RecipeFullResponse(RecipeResponse):
 
     ingredients: List[RecipeIngredientResponse] = Field(default_factory=list)
     instructions: List[RecipeInstructionResponse] = Field(default_factory=list)
+
+
+# Recipe Search and Filtering
+class RecipeSearchParams(BaseSchema):
+    """Schema for recipe search parameters."""
+
+    search: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=100,
+        description="Search by recipe name or description",
+    )
+    difficulty: Optional[str] = Field(
+        None,
+        pattern="^(easy|medium|hard)$",
+        description="Filter by difficulty level",
+    )
+    max_prep_time: Optional[int] = Field(
+        None,
+        ge=0,
+        description="Maximum prep time in minutes",
+    )
+    max_cook_time: Optional[int] = Field(
+        None,
+        ge=0,
+        description="Maximum cook time in minutes",
+    )
+    max_calories: Optional[int] = Field(
+        None,
+        ge=0,
+        description="Maximum calories per serving",
+    )
+    is_public: Optional[bool] = Field(
+        None,
+        description="Filter by public/private recipes",
+    )
+    include_user_recipes: bool = Field(
+        default=True,
+        description="Include user's own recipes",
+    )
+    sort_by: str = Field(
+        default="created_at",
+        pattern="^(created_at|name|prep_time_minutes|cook_time_minutes|calories_per_serving|views_count|saves_count)$",
+        description="Field to sort by",
+    )
+    sort_order: str = Field(
+        default="desc",
+        pattern="^(asc|desc)$",
+        description="Sort order (asc/desc)",
+    )
+
+
+class RecipeListResponse(BaseSchema):
+    """Schema for paginated recipe list."""
+
+    items: List[RecipeResponse]
+    total: int
+    skip: int
+    limit: int

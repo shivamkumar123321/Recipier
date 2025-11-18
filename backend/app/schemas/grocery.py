@@ -89,3 +89,61 @@ class GroceryListFullResponse(GroceryListResponse):
     """Complete grocery list response with items."""
 
     items: List[GroceryListItemResponse] = Field(default_factory=list)
+
+
+# Grocery List Pagination
+class GroceryListListResponse(BaseSchema):
+    """Schema for paginated grocery list."""
+
+    items: List[GroceryListFullResponse]
+    total: int
+    skip: int
+    limit: int
+
+
+# Grocery List Generation from Meal Plan
+class GroceryListGenerateRequest(BaseSchema):
+    """Schema for generating grocery list from meal plan."""
+
+    meal_plan_id: int = Field(
+        ...,
+        description="ID of the meal plan to generate grocery list from",
+    )
+    name: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=255,
+        description="Name for the grocery list (auto-generated if not provided)",
+    )
+    exclude_inventory_items: bool = Field(
+        default=True,
+        description="Exclude items already in inventory",
+    )
+
+
+class GroceryListGenerateResponse(BaseSchema):
+    """Schema for grocery list generation response."""
+
+    grocery_list: GroceryListFullResponse
+    items_excluded: int = Field(
+        ...,
+        description="Number of items excluded (already in inventory)",
+    )
+    message: str
+
+
+# Grocery List Item Check
+class GroceryListItemCheckRequest(BaseSchema):
+    """Schema for checking/unchecking a grocery list item."""
+
+    is_checked: bool = Field(
+        ...,
+        description="Whether the item is checked",
+    )
+
+
+class GroceryListItemCheckResponse(BaseSchema):
+    """Schema for grocery list item check response."""
+
+    item: GroceryListItemResponse
+    message: str
