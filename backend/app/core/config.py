@@ -57,9 +57,44 @@ class Settings(BaseSettings):
         default="",
         description="OpenAI API key for GPT-4, Whisper, Vision",
     )
-    OPENAI_MODEL: str = Field(default="gpt-4")
-    OPENAI_MAX_TOKENS: int = Field(default=1000)
-    OPENAI_TEMPERATURE: float = Field(default=0.7)
+    OPENAI_MODEL: str = Field(
+        default="gpt-4",
+        description="Default GPT model (gpt-4, gpt-4-turbo, gpt-3.5-turbo)",
+    )
+    OPENAI_MAX_TOKENS: int = Field(
+        default=1000,
+        description="Maximum tokens for completions",
+    )
+    OPENAI_TEMPERATURE: float = Field(
+        default=0.7,
+        description="Temperature for text generation (0.0-2.0)",
+    )
+
+    # OpenAI Advanced Settings
+    OPENAI_VISION_MODEL: str = Field(
+        default="gpt-4-vision-preview",
+        description="Model for vision tasks",
+    )
+    OPENAI_MAX_RETRIES: int = Field(
+        default=3,
+        description="Maximum number of retries for failed requests",
+    )
+    OPENAI_TIMEOUT: int = Field(
+        default=60,
+        description="Request timeout in seconds",
+    )
+    OPENAI_CACHE_TTL: int = Field(
+        default=3600,
+        description="Cache TTL in seconds for repeated queries (1 hour default)",
+    )
+    OPENAI_ENABLE_CACHING: bool = Field(
+        default=True,
+        description="Enable Redis caching for OpenAI responses",
+    )
+    OPENAI_TRACK_USAGE: bool = Field(
+        default=True,
+        description="Track token usage for cost monitoring",
+    )
 
     # CORS
     CORS_ORIGINS: List[str] = Field(
