@@ -10,9 +10,10 @@ Provides:
 - Category filtering
 """
 
-from typing import List
+import base64
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import PaginationParams, get_current_user
@@ -96,6 +97,90 @@ async def add_items_via_voice(
         db=db,
         audio_data_base64=request.audio_data,
         audio_format=request.audio_format,
+        user_id=current_user.id,
+    )
+
+    return response
+
+
+@router.post(
+    "/voice-add/file",
+    response_model=VoiceAddResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add items via voice file upload",
+    description="Add inventory items via audio file upload (multipart/form-data)",
+)
+async def add_items_via_voice_file(
+    audio_file: UploadFile = File(..., description="Audio file to transcribe"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> VoiceAddResponse:
+    """
+    Add items to inventory via voice file upload.
+
+    Accepts audio files via multipart/form-data. Supported formats:
+    webm, mp3, wav, m4a, ogg.
+
+    Args:
+        audio_file: Uploaded audio file
+        db: Database session
+        current_user: Current authenticated user
+
+    Returns:
+        Voice add response with transcription and added items
+
+    Raises:
+        HTTPException: If file is invalid or processing fails
+    """
+    from fastapi import HTTPException
+
+    # Read audio file
+    audio_bytes = await audio_file.read()
+    file_size = len(audio_bytes)
+
+    # Check file size (max 10MB)
+    max_size = 10 * 1024 * 1024  # 10MB
+    if file_size > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Audio file too large. Max size: {max_size / 1024 / 1024}MB",
+        )
+
+    # Detect audio format from content type or filename
+    content_type = audio_file.content_type.lower() if audio_file.content_type else ""
+    filename = audio_file.filename.lower() if audio_file.filename else ""
+
+    format_map = {
+        "audio/webm": "webm",
+        "audio/mpeg": "mp3",
+        "audio/mp3": "mp3",
+        "audio/wav": "wav",
+        "audio/wave": "wav",
+        "audio/x-wav": "wav",
+        "audio/x-m4a": "m4a",
+        "audio/m4a": "m4a",
+        "audio/ogg": "ogg",
+    }
+
+    audio_format = format_map.get(content_type)
+
+    # Try filename extension if content type doesn't match
+    if not audio_format:
+        for ext in ["webm", "mp3", "wav", "m4a", "ogg"]:
+            if filename.endswith(f".{ext}"):
+                audio_format = ext
+                break
+
+    if not audio_format:
+        audio_format = "webm"  # Default fallback
+
+    # Convert to base64 and delegate to existing service
+    audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+    response = await inventory_service.add_items_from_voice(
+        db=db,
+        audio_data_base64=audio_base64,
+        audio_format=audio_format,
         user_id=current_user.id,
     )
 
