@@ -4,7 +4,15 @@ Main API router that aggregates all v1 endpoint routers.
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth, grocery_lists, inventory, meal_plans, recipes
+from app.api.v1 import (
+    auth,
+    grocery_lists,
+    inventory,
+    meal_plans,
+    notifications,
+    recipes,
+    websocket,
+)
 
 # Create main API router
 api_router = APIRouter()
@@ -38,4 +46,16 @@ api_router.include_router(
     grocery_lists.router,
     prefix="/grocery-lists",
     tags=["Grocery Lists"]
+)
+
+api_router.include_router(
+    notifications.router,
+    prefix="/notifications",
+    tags=["Notifications"]
+)
+
+# Include WebSocket router (no prefix)
+api_router.include_router(
+    websocket.router,
+    tags=["WebSocket"]
 )

@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from app.models.meal_plan import MealPlan
     from app.models.grocery import GroceryList
     from app.models.activity import ActivityLog
+    from app.models.notification import Notification
 
 
 class User(Base, TimestampMixin, SoftDeleteMixin):
@@ -119,6 +120,11 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
     activity_logs: Mapped[List["ActivityLog"]] = relationship(
         "ActivityLog",
         back_populates="user",
+    )
+    notifications: Mapped[List["Notification"]] = relationship(
+        "Notification",
+        back_populates="user",
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self) -> str:

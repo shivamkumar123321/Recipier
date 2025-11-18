@@ -24,6 +24,9 @@ redis==5.0.1
 # Rate limiting
 slowapi==0.1.9
 
+# Background tasks
+apscheduler==3.10.4
+
 # File handling
 aiofiles==23.2.1
 pillow==10.1.0

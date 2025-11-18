@@ -26,6 +26,7 @@ from app.core.logging import get_logger, setup_logging
 from app.db.database import close_db, init_db
 from app.middleware import RequestLoggerMiddleware, register_exception_handlers
 from app.middleware.rate_limiter import limiter
+from app.services.scheduler import start_scheduler, stop_scheduler
 
 # Set up logging
 setup_logging()
@@ -59,12 +60,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("Initializing database tables (development mode)...")
         # await init_db()  # Uncomment if you want to auto-create tables in dev
 
+    # Start background scheduler
+    try:
+        start_scheduler()
+        logger.info("✅ Background scheduler started")
+    except Exception as e:
+        logger.error(f"❌ Failed to start scheduler: {e}")
+        logger.warning("⚠️  Application will continue without scheduler (no background tasks)")
+
     logger.info("✅ Application startup complete")
 
     yield
 
     # Shutdown
     logger.info("🛑 Shutting down Weight Coach API...")
+
+    # Stop background scheduler
+    try:
+        stop_scheduler()
+        logger.info("✅ Background scheduler stopped")
+    except Exception as e:
+        logger.error(f"❌ Error stopping scheduler: {e}")
 
     # Close Redis connection pool
     await close_redis()
