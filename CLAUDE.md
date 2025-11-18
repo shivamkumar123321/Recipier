@@ -681,6 +681,555 @@ async def test_create_meal(client: AsyncClient, auth_headers: dict):
 
 ---
 
+## 🏗️ Backend Development Conventions
+
+### Architecture Overview
+
+The backend follows a **layered architecture** pattern:
+
+```
+API Routes (Presentation Layer)
+       ↓
+Services (Business Logic Layer)
+       ↓
+Repositories (Data Access Layer)
+       ↓
+Models (Database Layer)
+```
+
+### Adding a New Feature
+
+Follow these steps when adding a new feature to the backend:
+
+#### 1. Create Database Model (if needed)
+
+```python
+# app/models/my_model.py
+from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy.orm import relationship
+from app.db.base import Base, TimestampMixin
+
+class MyModel(Base, TimestampMixin):
+    __tablename__ = "my_table"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    # Relationships
+    user = relationship("User", back_populates="my_models")
+```
+
+**Then create migration:**
+```bash
+cd backend
+alembic revision --autogenerate -m "add my_table"
+alembic upgrade head
+```
+
+#### 2. Create Pydantic Schemas
+
+```python
+# app/schemas/my_schema.py
+from pydantic import BaseModel, Field
+from datetime import datetime
+from typing import Optional
+
+class MySchemaBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+
+class MySchemaCreate(MySchemaBase):
+    """Schema for creating new record"""
+    pass
+
+class MySchemaUpdate(BaseModel):
+    """Schema for updating record (all fields optional)"""
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+
+class MySchemaResponse(MySchemaBase):
+    """Schema for API responses"""
+    id: int
+    user_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True  # Pydantic v2 (was orm_mode in v1)
+```
+
+#### 3. Create Repository
+
+```python
+# app/repositories/my_repository.py
+from typing import List, Optional
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.repositories.base import BaseRepository
+from app.models.my_model import MyModel
+
+class MyRepository(BaseRepository[MyModel]):
+    """Repository for MyModel data access"""
+
+    async def get_by_user(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[MyModel]:
+        """Get all records for a specific user"""
+        result = await db.execute(
+            select(MyModel)
+            .where(MyModel.user_id == user_id)
+            .offset(skip)
+            .limit(limit)
+        )
+        return result.scalars().all()
+
+    async def get_by_name(
+        self,
+        db: AsyncSession,
+        name: str,
+        user_id: int
+    ) -> Optional[MyModel]:
+        """Find record by name for specific user"""
+        result = await db.execute(
+            select(MyModel)
+            .where(
+                MyModel.name == name,
+                MyModel.user_id == user_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+# Create singleton instance
+my_repository = MyRepository(MyModel)
+```
+
+#### 4. Create Service
+
+```python
+# app/services/my_service.py
+from typing import List
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.repositories.my_repository import my_repository
+from app.schemas.my_schema import MySchemaCreate, MySchemaUpdate
+from app.models.my_model import MyModel
+from app.core.exceptions import NotFoundException, ConflictException
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+class MyService:
+    """Business logic for MyModel"""
+
+    async def create_my_record(
+        self,
+        db: AsyncSession,
+        data: MySchemaCreate,
+        user_id: int
+    ) -> MyModel:
+        """Create new record with validation"""
+        # Check for duplicates
+        existing = await my_repository.get_by_name(db, data.name, user_id)
+        if existing:
+            raise ConflictException(
+                f"Record with name '{data.name}' already exists",
+                error_code="DUPLICATE_NAME"
+            )
+
+        # Create record
+        record_data = data.dict()
+        record_data["user_id"] = user_id
+
+        logger.info(f"Creating new record for user {user_id}")
+        record = await my_repository.create(db, record_data)
+
+        return record
+
+    async def get_user_records(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[MyModel]:
+        """Get all records for user"""
+        return await my_repository.get_by_user(db, user_id, skip, limit)
+
+    async def update_record(
+        self,
+        db: AsyncSession,
+        record_id: int,
+        data: MySchemaUpdate,
+        user_id: int
+    ) -> MyModel:
+        """Update existing record"""
+        # Get and verify ownership
+        record = await my_repository.get(db, record_id)
+        if not record:
+            raise NotFoundException("Record not found", error_code="RECORD_NOT_FOUND")
+
+        if record.user_id != user_id:
+            raise NotFoundException("Record not found")  # Don't reveal it exists
+
+        # Update
+        logger.info(f"Updating record {record_id}")
+        updated = await my_repository.update(db, record, data.dict(exclude_unset=True))
+
+        return updated
+
+    async def delete_record(
+        self,
+        db: AsyncSession,
+        record_id: int,
+        user_id: int
+    ) -> bool:
+        """Soft delete record"""
+        record = await my_repository.get(db, record_id)
+        if not record or record.user_id != user_id:
+            raise NotFoundException("Record not found")
+
+        logger.info(f"Deleting record {record_id}")
+        await my_repository.soft_delete(db, record_id)
+
+        return True
+
+# Create singleton instance
+my_service = MyService()
+```
+
+#### 5. Create API Routes
+
+```python
+# app/api/v1/my_routes.py
+from typing import List
+from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.api.deps import get_db, get_current_user, PaginationParams
+from app.services.my_service import my_service
+from app.schemas.my_schema import (
+    MySchemaCreate,
+    MySchemaUpdate,
+    MySchemaResponse
+)
+from app.models.user import User
+
+router = APIRouter(
+    prefix="/my-resource",
+    tags=["My Resource"]
+)
+
+@router.post(
+    "/",
+    response_model=MySchemaResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create new record",
+    description="Create a new record for the authenticated user"
+)
+async def create_record(
+    data: MySchemaCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> MySchemaResponse:
+    """Create a new record"""
+    record = await my_service.create_my_record(db, data, current_user.id)
+    return record
+
+@router.get(
+    "/",
+    response_model=List[MySchemaResponse],
+    summary="Get all records",
+    description="Retrieve all records for the authenticated user"
+)
+async def get_records(
+    pagination: PaginationParams = Depends(),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> List[MySchemaResponse]:
+    """Get all user's records with pagination"""
+    records = await my_service.get_user_records(
+        db,
+        current_user.id,
+        skip=pagination.skip,
+        limit=pagination.limit
+    )
+    return records
+
+@router.get(
+    "/{record_id}",
+    response_model=MySchemaResponse,
+    summary="Get record by ID"
+)
+async def get_record(
+    record_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> MySchemaResponse:
+    """Get specific record by ID"""
+    # Service will validate ownership
+    record = await my_service.get_record_by_id(db, record_id, current_user.id)
+    return record
+
+@router.patch(
+    "/{record_id}",
+    response_model=MySchemaResponse,
+    summary="Update record"
+)
+async def update_record(
+    record_id: int,
+    data: MySchemaUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> MySchemaResponse:
+    """Update existing record"""
+    record = await my_service.update_record(db, record_id, data, current_user.id)
+    return record
+
+@router.delete(
+    "/{record_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete record"
+)
+async def delete_record(
+    record_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> None:
+    """Soft delete a record"""
+    await my_service.delete_record(db, record_id, current_user.id)
+```
+
+#### 6. Register Router
+
+```python
+# app/api/v1/router.py
+from fastapi import APIRouter
+from app.api.v1 import auth, my_routes
+
+api_router = APIRouter()
+
+api_router.include_router(auth.router)
+api_router.include_router(my_routes.router)  # Add your new router
+```
+
+#### 7. Write Tests
+
+```python
+# tests/test_api/test_my_routes.py
+import pytest
+from httpx import AsyncClient
+
+@pytest.mark.asyncio
+async def test_create_record(client: AsyncClient, auth_headers: dict):
+    """Test creating a new record"""
+    response = await client.post(
+        "/api/v1/my-resource/",
+        json={"name": "Test Record"},
+        headers=auth_headers
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["name"] == "Test Record"
+    assert "id" in data
+
+@pytest.mark.asyncio
+async def test_get_records(client: AsyncClient, auth_headers: dict):
+    """Test retrieving user records"""
+    response = await client.get(
+        "/api/v1/my-resource/",
+        headers=auth_headers
+    )
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+```
+
+### Best Practices
+
+#### Error Handling
+
+Always use custom exceptions from `app.core.exceptions`:
+
+```python
+from app.core.exceptions import (
+    NotFoundException,
+    UnauthorizedException,
+    ConflictException,
+    ValidationException
+)
+
+# In services
+if not user:
+    raise NotFoundException(
+        "User not found",
+        error_code="USER_NOT_FOUND"
+    )
+
+if existing_email:
+    raise ConflictException(
+        "Email already registered",
+        error_code="EMAIL_CONFLICT",
+        details={"email": email}
+    )
+```
+
+#### Database Sessions
+
+Always use dependency injection for database sessions:
+
+```python
+from app.api.deps import get_db
+
+@router.get("/items")
+async def get_items(db: AsyncSession = Depends(get_db)):
+    # db session is automatically managed
+    # No need to manually close or commit in routes
+    pass
+```
+
+#### Logging
+
+Use structured logging throughout:
+
+```python
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+logger.info("Processing request", extra={"user_id": user.id})
+logger.error("Failed to process", extra={"error": str(e)})
+```
+
+#### Authentication
+
+Protect routes with authentication:
+
+```python
+from app.api.deps import get_current_user
+
+@router.get("/protected")
+async def protected_route(
+    current_user: User = Depends(get_current_user)
+):
+    # Route automatically requires valid JWT token
+    # current_user contains authenticated user
+    pass
+```
+
+### Running the Backend Server
+
+#### Development Mode
+
+```bash
+# Navigate to backend directory
+cd backend
+
+# Activate virtual environment
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# Run with auto-reload
+uvicorn app.main:app --reload --port 8000
+
+# Run with custom host and port
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Run with log level
+uvicorn app.main:app --reload --log-level debug
+```
+
+#### Access API Documentation
+
+Once running, access interactive documentation:
+
+- **Swagger UI**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
+- **OpenAPI JSON**: http://localhost:8000/openapi.json
+- **Health Check**: http://localhost:8000/health
+
+#### Production Mode
+
+```bash
+# Without reload (better performance)
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+
+# With Gunicorn (production recommended)
+gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+```
+
+### Common Backend Tasks
+
+#### Check API Health
+
+```bash
+curl http://localhost:8000/health
+```
+
+#### Test Authentication Flow
+
+```bash
+# Register
+curl -X POST http://localhost:8000/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"password123","full_name":"Test User"}'
+
+# Login
+curl -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"password123"}'
+
+# Use token (replace <TOKEN> with actual token)
+curl http://localhost:8000/api/v1/auth/me \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+#### View Logs
+
+```bash
+# Application logs (if file logging enabled)
+tail -f backend/logs/app.log
+
+# Uvicorn server logs (console)
+# Automatically displayed when running with --reload
+```
+
+### Troubleshooting
+
+**Issue: Import errors when starting server**
+```bash
+# Ensure virtual environment is activated
+source venv/bin/activate
+
+# Reinstall dependencies
+pip install -r requirements.txt
+```
+
+**Issue: Database connection errors**
+```bash
+# Check PostgreSQL is running
+pg_isready
+
+# Verify DATABASE_URL in .env
+cat .env | grep DATABASE_URL
+
+# Test connection
+psql $DATABASE_URL -c "SELECT 1"
+```
+
+**Issue: Migration errors**
+```bash
+# Check current migration state
+alembic current
+
+# View migration history
+alembic history
+
+# Rollback and retry
+alembic downgrade -1
+alembic upgrade head
+```
+
+---
+
 ## 🔐 Environment Variables
 
 ### Frontend (.env.local)
