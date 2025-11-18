@@ -1064,6 +1064,110 @@ class OpenAIService:
             logger.error(f"Content: {content[:500]}")
             raise ValueError(f"Invalid JSON response from OpenAI: {str(e)}")
 
+    async def text_to_speech(
+        self,
+        text: str,
+        voice: str = "nova",
+        model: str = "tts-1",
+        response_format: str = "mp3",
+    ) -> bytes:
+        """
+        Convert text to speech using OpenAI TTS.
+
+        Args:
+            text: Text to convert to speech
+            voice: Voice to use (alloy, echo, fable, onyx, nova, shimmer)
+            model: TTS model (tts-1 or tts-1-hd)
+            response_format: Audio format (mp3, opus, aac, flac, wav, pcm)
+
+        Returns:
+            Audio data in bytes
+
+        Raises:
+            OpenAIServiceError: If TTS generation fails
+
+        Example:
+            >>> audio_bytes = await service.text_to_speech(
+            ...     "Hello! Your timer is done.",
+            ...     voice="nova"
+            ... )
+            >>> with open("response.mp3", "wb") as f:
+            ...     f.write(audio_bytes)
+        """
+        logger.info(f"Generating TTS for text: '{text[:50]}...' (voice: {voice})")
+
+        async def _generate_speech():
+            response = await self.client.audio.speech.create(
+                model=model,
+                voice=voice,
+                input=text,
+                response_format=response_format,
+            )
+
+            # Read the audio content
+            audio_data = b""
+            async for chunk in response.iter_bytes():
+                audio_data += chunk
+
+            return audio_data
+
+        try:
+            audio_bytes = await self._retry_with_backoff(_generate_speech)
+            logger.info(f"TTS successful: {len(audio_bytes)} bytes generated")
+            return audio_bytes
+
+        except Exception as e:
+            logger.error(f"Text-to-speech failed: {e}", exc_info=True)
+            raise OpenAIServiceError(f"TTS generation failed: {str(e)}")
+
+    async def chat_completion(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        model: Optional[str] = None,
+    ) -> str:
+        """
+        Simple chat completion without streaming.
+
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+            temperature: Sampling temperature (0-2)
+            max_tokens: Maximum tokens to generate
+            model: Model to use (defaults to configured model)
+
+        Returns:
+            Response text
+
+        Raises:
+            OpenAIServiceError: If completion fails
+        """
+        async def _complete():
+            response = await self.client.chat.completions.create(
+                model=model or self.model,
+                messages=messages,
+                temperature=temperature or self.temperature,
+                max_tokens=max_tokens or self.max_tokens,
+            )
+
+            # Track usage
+            if self.track_usage and hasattr(response, 'usage'):
+                self.total_tokens_used += response.usage.total_tokens
+                self.total_requests += 1
+
+            return response.choices[0].message.content
+
+        try:
+            return await self._retry_with_backoff(_complete)
+        except Exception as e:
+            logger.error(f"Chat completion failed: {e}", exc_info=True)
+            raise OpenAIServiceError(f"Chat completion failed: {str(e)}")
+
 
 # Singleton instance
 openai_service = OpenAIService()
+
+
+def get_openai_service() -> OpenAIService:
+    """Get OpenAI service singleton instance."""
+    return openai_service
