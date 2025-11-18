@@ -312,6 +312,168 @@ docker run --name weight-coach-redis -p 6379:6379 -d redis:7
 
 # Connect to PostgreSQL
 psql -h localhost -U postgres -d weight_coach
+
+# Create database manually (if needed)
+createdb weight_coach
+
+# Run migrations (create/update tables)
+cd backend
+alembic upgrade head
+
+# Create a new migration after model changes
+alembic revision --autogenerate -m "description of changes"
+
+# Seed database with sample data
+python seed.py
+
+# Rollback last migration
+alembic downgrade -1
+
+# View migration history
+alembic history
+
+# Check current database version
+alembic current
+```
+
+#### Database Setup (First Time)
+
+1. **Install PostgreSQL 15+**
+   ```bash
+   # macOS (with Homebrew)
+   brew install postgresql@15
+   brew services start postgresql@15
+
+   # Ubuntu/Debian
+   sudo apt update
+   sudo apt install postgresql-15 postgresql-contrib-15
+   sudo systemctl start postgresql
+
+   # Windows - Download installer from postgresql.org
+   ```
+
+2. **Create Database**
+   ```bash
+   # Create database
+   createdb weight_coach
+
+   # Or use psql
+   psql postgres
+   CREATE DATABASE weight_coach;
+   \q
+   ```
+
+3. **Configure Environment Variables**
+   ```bash
+   # Create .env file in backend/
+   cd backend
+   cat > .env << EOF
+   DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/weight_coach
+   REDIS_URL=redis://localhost:6379/0
+   SECRET_KEY=$(openssl rand -hex 32)
+   OPENAI_API_KEY=your-api-key-here
+   EOF
+   ```
+
+4. **Install Python Dependencies**
+   ```bash
+   cd backend
+   python -m venv venv
+   source venv/bin/activate  # Windows: venv\Scripts\activate
+   pip install -r requirements.txt
+   ```
+
+5. **Run Migrations**
+   ```bash
+   # This creates all database tables
+   alembic upgrade head
+   ```
+
+6. **Seed Sample Data (Optional)**
+   ```bash
+   # Populate database with test data
+   python seed.py
+   ```
+
+7. **Verify Setup**
+   ```bash
+   # Check tables were created
+   psql weight_coach
+   \dt  # List all tables
+   \d users  # Describe users table
+   \q
+
+   # Or use a database GUI like pgAdmin, DBeaver, or TablePlus
+   ```
+
+#### Database Schema Overview
+
+The database includes 17 tables organized into domains:
+
+**User Domain:**
+- `users` - User accounts and authentication
+- `user_profiles` - Extended user information
+- `user_goals` - Health and fitness goals
+
+**Meal Domain:**
+- `meals` - Meal logging
+- `meal_items` - Individual food items
+- `ai_analyses` - GPT-4 nutrition analysis
+
+**Inventory Domain:**
+- `food_categories` - Food categorization
+- `inventory_items` - Pantry/fridge tracking
+
+**Recipe Domain:**
+- `recipes` - Recipe storage
+- `recipe_ingredients` - Recipe ingredients
+- `recipe_instructions` - Cooking steps
+- `user_recipes` - Saved/favorited recipes
+
+**Planning Domain:**
+- `meal_plans` - Weekly/daily meal plans
+- `meal_plan_items` - Scheduled meals
+
+**Shopping Domain:**
+- `grocery_lists` - Shopping lists
+- `grocery_list_items` - List items
+
+**Audit Domain:**
+- `activity_logs` - Activity tracking
+
+See `docs/database-design.md` for complete schema documentation.
+
+#### Common Database Tasks
+
+**View all users:**
+```bash
+psql weight_coach -c "SELECT id, email, is_active FROM users;"
+```
+
+**Count records:**
+```bash
+psql weight_coach -c "
+SELECT
+  (SELECT COUNT(*) FROM users) as users,
+  (SELECT COUNT(*) FROM meals) as meals,
+  (SELECT COUNT(*) FROM recipes) as recipes;
+"
+```
+
+**Reset database (⚠️ Destroys all data):**
+```bash
+cd backend
+alembic downgrade base  # Drop all tables
+alembic upgrade head    # Recreate tables
+python seed.py          # Restore sample data
+```
+
+**Backup database:**
+```bash
+pg_dump weight_coach > backup.sql
+
+# Restore from backup
+psql weight_coach < backup.sql
 ```
 
 ---
