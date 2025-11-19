@@ -630,54 +630,785 @@ import { cn } from '@/lib/utils';
 
 ## 🧪 Testing Approach
 
-### Frontend Testing
-- **Unit Tests**: Jest + React Testing Library
-- **Integration Tests**: Test component interactions
-- **E2E Tests**: Playwright (if time permits)
-- **Coverage Goal**: 70%+ for critical paths
+### Testing Philosophy
 
-```typescript
-// Example test
-import { render, screen } from '@testing-library/react';
-import { MealCard } from './meal-card';
+The Weight Coach project follows a **comprehensive testing strategy** to ensure code quality, reliability, and maintainability:
 
-test('displays meal information', () => {
-  const meal = { id: '1', name: 'Chicken Salad', calories: 350 };
-  render(<MealCard meal={meal} onDelete={() => {}} />);
+1. **Test-Driven Development (TDD)**: Write tests alongside features
+2. **Layered Testing**: Unit, integration, and E2E tests for different layers
+3. **High Coverage**: Target 80%+ coverage for backend, 70%+ for frontend
+4. **Mock External Services**: Isolate tests from third-party APIs
+5. **Fast Feedback**: Tests should run quickly for rapid iteration
+6. **CI/CD Ready**: Automated testing on every commit
 
-  expect(screen.getByText('Chicken Salad')).toBeInTheDocument();
-  expect(screen.getByText('350 cal')).toBeInTheDocument();
-});
-```
+---
 
 ### Backend Testing
-- **Unit Tests**: pytest for individual functions
-- **Integration Tests**: Test API endpoints with test DB
-- **Coverage Goal**: 80%+ for services and routes
 
+#### Test Structure
+
+```
+backend/tests/
+├── conftest.py                    # Pytest fixtures and configuration
+├── pytest.ini                     # Pytest settings and coverage config
+├── test_repositories.py           # Repository layer tests (CRUD)
+│
+├── test_api/                      # Integration tests for API endpoints
+│   ├── test_auth.py              # Authentication endpoints
+│   ├── test_inventory.py         # Inventory management
+│   ├── test_recipes.py           # Recipe CRUD and search
+│   ├── test_meal_plans.py        # Meal planning
+│   ├── test_grocery_lists.py    # Grocery list management
+│   ├── test_coaching.py          # AI coaching endpoints
+│   ├── test_voice.py             # Voice assistant WebSocket
+│   ├── test_vision.py            # Image recognition
+│   └── test_notifications.py    # Notification preferences
+│
+├── test_services/                 # Service layer unit tests
+│   ├── test_openai_service.py   # OpenAI API integration
+│   ├── test_voice_command_service.py  # Voice command parsing
+│   └── test_image_storage_service.py  # Image upload/storage
+│
+└── fixtures/                      # Test data and utilities
+    ├── audio_samples.py          # Mock audio files
+    └── image_samples.py          # Mock images
+```
+
+#### Running Backend Tests
+
+**Run all tests:**
+```bash
+cd backend
+pytest
+```
+
+**Run with coverage:**
+```bash
+pytest --cov=app --cov-report=html --cov-report=term-missing
+```
+
+**Run specific test file:**
+```bash
+pytest tests/test_api/test_auth.py
+```
+
+**Run specific test class:**
+```bash
+pytest tests/test_repositories.py::TestUserRepository
+```
+
+**Run specific test:**
+```bash
+pytest tests/test_api/test_auth.py::test_register_user
+```
+
+**Run with markers:**
+```bash
+# Only unit tests
+pytest -m unit
+
+# Only integration tests
+pytest -m integration
+
+# Only database tests
+pytest -m database
+
+# Exclude slow tests
+pytest -m "not slow"
+```
+
+**Run in parallel (faster):**
+```bash
+pytest -n auto  # Uses all CPU cores
+```
+
+**View coverage report:**
+```bash
+# Generate HTML report
+pytest --cov=app --cov-report=html
+
+# Open in browser
+open htmlcov/index.html  # macOS
+xdg-open htmlcov/index.html  # Linux
+```
+
+#### Test Configuration (pytest.ini)
+
+```ini
+[pytest]
+# Test discovery patterns
+python_files = test_*.py
+python_classes = Test*
+python_functions = test_*
+
+# Test paths
+testpaths = tests
+
+# Output and coverage options
+addopts =
+    -v                          # Verbose output
+    --strict-markers            # Enforce marker registration
+    --tb=short                  # Short traceback format
+    --cov=app                   # Coverage for app/ directory
+    --cov-report=term-missing   # Show missing lines in terminal
+    --cov-report=html           # Generate HTML coverage report
+    --cov-report=xml            # Generate XML for CI tools
+    --cov-branch                # Branch coverage
+    --cov-fail-under=80         # Fail if coverage < 80%
+
+# Test markers
+markers =
+    unit: Unit tests for individual components
+    integration: Integration tests for API endpoints
+    slow: Tests that take longer to run
+    database: Tests that require database access
+    external: Tests that mock external services
+
+# Async support
+asyncio_mode = auto
+
+# Warnings
+filterwarnings =
+    error
+    ignore::DeprecationWarning
+    ignore::PendingDeprecationWarning
+```
+
+#### Test Fixtures (conftest.py)
+
+The `conftest.py` file provides reusable test fixtures:
+
+**Database Fixtures:**
 ```python
-# Example test
+@pytest.fixture
+async def db() -> AsyncGenerator[AsyncSession, None]:
+    """Provides clean database session for each test"""
+    # Creates test database, runs migrations, yields session, then cleans up
+
+@pytest.fixture
+async def test_user(db: AsyncSession) -> User:
+    """Creates a test user"""
+
+@pytest.fixture
+async def verified_user(db: AsyncSession) -> User:
+    """Creates a verified test user"""
+
+@pytest.fixture
+async def admin_user(db: AsyncSession) -> User:
+    """Creates an admin test user"""
+```
+
+**HTTP Client Fixtures:**
+```python
+@pytest.fixture
+async def client() -> AsyncGenerator[AsyncClient, None]:
+    """Provides HTTP test client for API testing"""
+
+@pytest.fixture
+async def auth_headers(test_user: User) -> dict:
+    """Provides authentication headers with valid JWT token"""
+```
+
+**Mock Fixtures:**
+```python
+@pytest.fixture
+def mock_openai_chat_response():
+    """Mocks OpenAI chat completion response"""
+
+@pytest.fixture
+def mock_openai_vision_response():
+    """Mocks OpenAI vision analysis response"""
+
+@pytest.fixture
+def mock_whisper_transcription():
+    """Mocks Whisper audio transcription"""
+```
+
+#### Writing Tests
+
+**Repository Tests Example:**
+```python
+# tests/test_repositories.py
+import pytest
+from datetime import datetime, timedelta
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.models.inventory import InventoryItem, FoodCategory
+from app.repositories.inventory_repository import inventory_repository
+
+class TestInventoryRepository:
+    """Test inventory repository operations"""
+
+    @pytest.mark.asyncio
+    async def test_create_inventory_item(self, db: AsyncSession, test_user):
+        """Test creating an inventory item"""
+        item_data = {
+            "user_id": test_user.id,
+            "name": "Chicken Breast",
+            "quantity": 500.0,
+            "unit": "g",
+            "category": FoodCategory.MEAT,
+            "location": "fridge",
+        }
+
+        item = await inventory_repository.create(db, item_data)
+        await db.commit()
+        await db.refresh(item)
+
+        assert item.id is not None
+        assert item.name == "Chicken Breast"
+        assert item.quantity == 500.0
+        assert item.category == FoodCategory.MEAT
+
+    @pytest.mark.asyncio
+    async def test_filter_expiring_soon(self, db: AsyncSession, test_user):
+        """Test filtering items expiring soon"""
+        # Create item expiring in 2 days
+        item_data = {
+            "user_id": test_user.id,
+            "name": "Milk",
+            "quantity": 1000.0,
+            "unit": "ml",
+            "category": FoodCategory.DAIRY,
+            "expiry_date": datetime.utcnow() + timedelta(days=2),
+        }
+        await inventory_repository.create(db, item_data)
+        await db.commit()
+
+        # Get items expiring within 3 days
+        expiring_items = await inventory_repository.get_expiring_soon(
+            db, test_user.id, days=3
+        )
+
+        assert len(expiring_items) >= 1
+        assert all(
+            item.expiry_date <= datetime.utcnow() + timedelta(days=3)
+            for item in expiring_items
+            if item.expiry_date
+        )
+```
+
+**API Integration Tests Example:**
+```python
+# tests/test_api/test_auth.py
 import pytest
 from httpx import AsyncClient
 
 @pytest.mark.asyncio
-async def test_create_meal(client: AsyncClient, auth_headers: dict):
+async def test_register_user(client: AsyncClient):
+    """Test user registration"""
     response = await client.post(
-        "/api/v1/meals",
-        json={"name": "Chicken Salad", "calories": 350},
-        headers=auth_headers
+        "/api/v1/auth/register",
+        json={
+            "email": "newuser@example.com",
+            "password": "SecurePass123!",
+            "full_name": "New User"
+        }
     )
+
     assert response.status_code == 201
     data = response.json()
-    assert data["name"] == "Chicken Salad"
-    assert data["calories"] == 350
+    assert data["email"] == "newuser@example.com"
+    assert data["full_name"] == "New User"
+    assert "id" in data
+    assert "password" not in data  # Never return password
+
+@pytest.mark.asyncio
+async def test_login_success(client: AsyncClient, test_user):
+    """Test successful login"""
+    response = await client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": test_user.email,
+            "password": "testpassword"  # Default test user password
+        }
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "access_token" in data
+    assert data["token_type"] == "bearer"
+
+@pytest.mark.asyncio
+async def test_get_current_user(client: AsyncClient, auth_headers, test_user):
+    """Test retrieving current authenticated user"""
+    response = await client.get(
+        "/api/v1/auth/me",
+        headers=auth_headers
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == test_user.id
+    assert data["email"] == test_user.email
 ```
 
-### Test Organization
-- Place tests next to source files or in `__tests__` directories
-- Use descriptive test names
-- Follow AAA pattern: Arrange, Act, Assert
-- Mock external services (OpenAI API, etc.)
+**Service Tests with Mocking:**
+```python
+# tests/test_services/test_openai_service.py
+import pytest
+from unittest.mock import AsyncMock, patch
+from app.services.openai_service import openai_service
+
+@pytest.mark.asyncio
+async def test_analyze_meal_with_ai(mock_openai_chat_response):
+    """Test meal analysis with mocked OpenAI response"""
+    with patch('openai.ChatCompletion.acreate',
+               new_callable=AsyncMock,
+               return_value=mock_openai_chat_response):
+
+        result = await openai_service.analyze_meal(
+            meal_description="Grilled chicken with rice and vegetables"
+        )
+
+        assert result is not None
+        assert "calories" in result
+        assert "protein_g" in result
+        assert result["calories"] > 0
+
+@pytest.mark.asyncio
+async def test_parse_voice_command():
+    """Test voice command parsing"""
+    result = await openai_service.parse_voice_command(
+        transcript="Set a timer for 10 minutes",
+        context={"current_step": 1, "recipe_name": "Pasta"}
+    )
+
+    assert result["action"] == "set_timer"
+    assert result["parameters"]["duration"] == 600  # 10 minutes in seconds
+```
+
+#### Mocking External Services
+
+**OpenAI API Mocking:**
+
+The conftest.py provides mock fixtures for all OpenAI services:
+
+```python
+# In your tests
+@pytest.mark.asyncio
+async def test_with_mocked_openai(mock_openai_chat_response):
+    """OpenAI calls are automatically mocked"""
+    with patch('openai.ChatCompletion.acreate',
+               return_value=mock_openai_chat_response):
+        # Test code that calls OpenAI
+        result = await some_function_using_openai()
+        assert result is not None
+```
+
+**Redis Mocking:**
+
+```python
+from unittest.mock import AsyncMock, patch
+
+@pytest.mark.asyncio
+async def test_with_mocked_redis():
+    """Mock Redis cache operations"""
+    with patch('redis.asyncio.Redis') as mock_redis:
+        mock_redis.get = AsyncMock(return_value=None)
+        mock_redis.set = AsyncMock(return_value=True)
+
+        # Test code that uses Redis
+        await cache.set("key", "value")
+        mock_redis.set.assert_called_once()
+```
+
+#### Coverage Requirements
+
+- **Minimum Coverage**: 80% for backend code
+- **Critical Paths**: 90%+ for auth, payments, data integrity
+- **Generated Code**: Excluded (migrations, auto-generated models)
+- **Coverage Reports**: Generated on every test run
+
+**View coverage gaps:**
+```bash
+pytest --cov=app --cov-report=term-missing
+
+# Shows which lines are not covered:
+# app/services/meal_service.py    85%   45-47, 62
+```
+
+**Coverage exclusions (in pytest.ini):**
+```ini
+[coverage:run]
+omit =
+    */tests/*
+    */migrations/*
+    */__pycache__/*
+    */venv/*
+    */env/*
+
+[coverage:report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+    @abstractmethod
+```
+
+---
+
+### Frontend Testing
+
+#### Test Structure
+
+```
+frontend/
+├── __tests__/                     # Global test utilities
+│   └── setup.ts                  # Jest setup
+│
+└── components/
+    ├── ui/
+    │   ├── button.tsx
+    │   └── button.test.tsx       # Component tests
+    │
+    └── features/
+        ├── meals/
+        │   ├── meal-logger.tsx
+        │   └── meal-logger.test.tsx
+        │
+        └── dashboard/
+            ├── nutrition-chart.tsx
+            └── nutrition-chart.test.tsx
+```
+
+#### Running Frontend Tests
+
+```bash
+cd frontend
+
+# Run all tests
+npm test
+
+# Run with coverage
+npm run test:coverage
+
+# Run in watch mode (for development)
+npm run test:watch
+
+# Run specific test file
+npm test -- meal-logger.test.tsx
+
+# Update snapshots
+npm test -- -u
+```
+
+#### Frontend Test Example
+
+```typescript
+// components/ui/button.test.tsx
+import { render, screen, fireEvent } from '@testing-library/react';
+import { Button } from './button';
+
+describe('Button Component', () => {
+  it('renders button text', () => {
+    render(<Button>Click me</Button>);
+    expect(screen.getByText('Click me')).toBeInTheDocument();
+  });
+
+  it('handles click events', () => {
+    const handleClick = jest.fn();
+    render(<Button onClick={handleClick}>Click me</Button>);
+
+    fireEvent.click(screen.getByText('Click me'));
+    expect(handleClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables button when disabled prop is true', () => {
+    render(<Button disabled>Disabled</Button>);
+    const button = screen.getByRole('button');
+
+    expect(button).toBeDisabled();
+  });
+});
+
+// components/features/meals/meal-logger.test.tsx
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MealLogger } from './meal-logger';
+
+describe('MealLogger', () => {
+  it('submits meal data', async () => {
+    const onSubmit = jest.fn();
+    render(<MealLogger onSubmit={onSubmit} />);
+
+    await userEvent.type(
+      screen.getByLabelText('Meal description'),
+      'Chicken salad'
+    );
+    await userEvent.click(screen.getByRole('button', { name: /log meal/i }));
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: 'Chicken salad'
+        })
+      );
+    });
+  });
+});
+```
+
+---
+
+### Test Organization Best Practices
+
+1. **Descriptive Test Names**: Use clear, intention-revealing names
+   ```python
+   # Good ✅
+   async def test_user_cannot_delete_another_users_meal()
+
+   # Bad ❌
+   async def test_delete_meal()
+   ```
+
+2. **AAA Pattern**: Arrange, Act, Assert
+   ```python
+   async def test_create_inventory_item(db, test_user):
+       # Arrange
+       item_data = {"name": "Milk", "quantity": 1000}
+
+       # Act
+       item = await inventory_repository.create(db, item_data)
+
+       # Assert
+       assert item.name == "Milk"
+   ```
+
+3. **One Assertion Per Test** (when practical)
+   ```python
+   # Test one behavior per test function
+   async def test_expired_items_are_filtered_out()
+   async def test_items_are_sorted_by_expiry_date()
+   ```
+
+4. **Mock External Services**: Never call real APIs in tests
+   ```python
+   @patch('openai.ChatCompletion.acreate')
+   async def test_ai_analysis(mock_openai):
+       mock_openai.return_value = mock_response
+       # Test code
+   ```
+
+5. **Clean Test Data**: Each test should be isolated
+   ```python
+   # Use fixtures that create fresh data per test
+   @pytest.fixture
+   async def test_user(db):
+       user = create_user()
+       yield user
+       # Cleanup handled by transaction rollback
+   ```
+
+---
+
+### CI/CD Integration
+
+#### GitHub Actions Workflow
+
+Create `.github/workflows/test.yml`:
+
+```yaml
+name: Tests
+
+on: [push, pull_request]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: |
+          cd backend
+          pytest --cov=app --cov-report=xml
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./backend/coverage.xml
+
+  frontend-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Run tests
+        run: |
+          cd frontend
+          npm run test:coverage
+```
+
+#### Pre-commit Hooks
+
+Create `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: bash -c 'cd backend && pytest tests/ -v'
+        language: system
+        pass_filenames: false
+        always_run: true
+```
+
+---
+
+### Test Runner Scripts
+
+#### Backend Test Runner
+
+Create `backend/run_tests.sh`:
+
+```bash
+#!/bin/bash
+# Backend test runner script
+
+set -e  # Exit on error
+
+echo "🧪 Running Weight Coach Backend Tests..."
+echo "========================================"
+
+# Activate virtual environment if it exists
+if [ -d "venv" ]; then
+    source venv/bin/activate
+fi
+
+# Run tests with coverage
+pytest tests/ \
+    --cov=app \
+    --cov-report=html \
+    --cov-report=xml \
+    --cov-report=term-missing \
+    --cov-fail-under=80 \
+    -v \
+    "$@"  # Pass any additional arguments
+
+# Check exit code
+if [ $? -eq 0 ]; then
+    echo ""
+    echo "✅ All tests passed!"
+    echo "📊 Coverage report generated: htmlcov/index.html"
+else
+    echo ""
+    echo "❌ Tests failed!"
+    exit 1
+fi
+```
+
+Make executable:
+```bash
+chmod +x backend/run_tests.sh
+```
+
+Usage:
+```bash
+# Run all tests
+./run_tests.sh
+
+# Run with additional pytest args
+./run_tests.sh -k test_auth
+./run_tests.sh -m "not slow"
+```
+
+---
+
+### Troubleshooting Tests
+
+**Issue: Database connection errors**
+```bash
+# Ensure test database exists
+createdb test_weight_coach
+
+# Check DATABASE_URL in .env.test
+cat backend/.env.test
+```
+
+**Issue: Async tests not running**
+```bash
+# Install pytest-asyncio
+pip install pytest-asyncio
+
+# Ensure asyncio_mode = auto in pytest.ini
+```
+
+**Issue: Import errors**
+```bash
+# Add backend directory to PYTHONPATH
+export PYTHONPATH="${PYTHONPATH}:$(pwd)/backend"
+
+# Or install in development mode
+cd backend
+pip install -e .
+```
+
+**Issue: Tests are slow**
+```bash
+# Run in parallel
+pytest -n auto
+
+# Skip slow tests
+pytest -m "not slow"
+
+# Increase test database pool size in conftest.py
+```
+
+---
+
+### Testing Checklist
+
+When adding new features, ensure:
+
+- [ ] Repository tests for new models
+- [ ] Service tests for business logic
+- [ ] API integration tests for new endpoints
+- [ ] Mock external service calls
+- [ ] Test error cases and edge cases
+- [ ] Test authentication/authorization
+- [ ] Achieve 80%+ coverage for new code
+- [ ] All tests pass before committing
+- [ ] Update this documentation if needed
 
 ---
 
