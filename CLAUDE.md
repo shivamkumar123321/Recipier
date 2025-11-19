@@ -58,11 +58,11 @@ Weight Coach is an AI-powered nutrition coaching web application designed to hel
 ### Frontend
 - **Framework**: Next.js 14 (App Router)
 - **Language**: TypeScript 5.x (strict mode)
-- **Styling**: Tailwind CSS 3.x
-- **UI Components**: shadcn/ui
-- **State Management**: React Context API / Zustand
+- **Styling**: Tailwind CSS 4.x (using CSS variables and @theme)
+- **UI Components**: shadcn/ui (customized with design tokens)
+- **State Management**: Zustand (global), React Query (server state)
 - **Forms**: React Hook Form + Zod validation
-- **HTTP Client**: Axios / Fetch API
+- **HTTP Client**: Fetch API (via custom hooks)
 - **Deployment**: Vercel
 
 ### Backend
@@ -101,15 +101,15 @@ weight-coach/
 ├── frontend/                  # Next.js application
 │   ├── src/
 │   │   ├── app/              # App Router pages
+│   │   │   ├── (auth)/       # Authentication routes (layout group)
+│   │   │   ├── (dashboard)/  # Dashboard routes (layout group)
 │   │   │   ├── layout.tsx    # Root layout
-│   │   │   ├── page.tsx      # Home page
-│   │   │   ├── dashboard/    # Dashboard routes
-│   │   │   ├── meals/        # Meal logging routes
-│   │   │   └── profile/      # User profile routes
+│   │   │   └── globals.css   # Global styles & Tailwind config
 │   │   │
 │   │   ├── components/       # React components
 │   │   │   ├── ui/           # shadcn/ui components
-│   │   │   ├── layouts/      # Layout components
+│   │   │   ├── layout/       # Layout components (Header, Sidebar)
+│   │   │   ├── forms/        # Form components
 │   │   │   ├── features/     # Feature-specific components
 │   │   │   └── shared/       # Shared/common components
 │   │   │
@@ -119,9 +119,9 @@ weight-coach/
 │   │   │   └── validators.ts # Zod schemas
 │   │   │
 │   │   ├── hooks/            # Custom React hooks
-│   │   ├── context/          # React context providers
-│   │   ├── types/            # TypeScript type definitions
-│   │   └── styles/           # Global styles
+│   │   ├── providers/        # React context providers
+│   │   ├── styles/           # Design tokens
+│   │   └── types/            # TypeScript type definitions
 │   │
 │   ├── public/               # Static assets
 │   ├── package.json
